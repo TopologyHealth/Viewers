@@ -11,6 +11,13 @@ import filtersMeta from './filtersMeta.js';
 import { useAppConfig } from '@state';
 import { useDebounce, useSearchParams } from '@hooks';
 import { utils, hotkeys } from '@ohif/core';
+import {
+  LAUNCH,
+  SmartLaunchHandler,
+  ClientFactory,
+  EMR,
+  ClientUtils,
+} from '@topologyhealth/smarterfhir';
 
 import {
   Icon,
@@ -44,6 +51,38 @@ const { sortBySeriesDate } = utils;
 const { availableLanguages, defaultLanguage, currentLanguage } = i18n;
 
 const seriesInStudiesMap = new Map();
+
+async function handleWebLaunch() {
+  try {
+    const emrClientID = '70138cf6-9384-4380-9e2a-de906474f235';
+    const redirectPath = '/';
+    const smartLaunchHandler = new SmartLaunchHandler(emrClientID);
+    await smartLaunchHandler.authorizeEMR(LAUNCH.EMR, redirectPath);
+  } catch (e) {
+    if (e instanceof Error) console.error('WebLaunch failed', e);
+    console.error('Unexpected Error', e);
+  }
+}
+
+async function mySmartClientInstantiator() {
+  try {
+    const clientFactory = new ClientFactory();
+    const client = await clientFactory.createEMRClient(LAUNCH.EMR);
+    if (!client) throw new Error('no client found');
+    return client;
+  } catch (reason) {
+    if (!(reason instanceof Error)) console.error('Unknown Error', reason);
+    if (
+      reason.message.includes("No 'state' parameter found. Please (re)launch the app.") ||
+      reason.message.includes('Could not find any JWT token')
+    ) {
+      return console.log('No EMR connection established.');
+    }
+    if (reason.message.includes('User is not available'))
+      return console.log('Waiting for Web Launch...');
+    console.error(reason.message);
+  }
+}
 
 /**
  * TODO:
@@ -81,6 +120,22 @@ function WorkList({
     ...defaultFilterValues,
     ...sessionQueryFilterValues,
   });
+
+  const [smartClient, setSmartClient] = useState(null);
+
+  useEffect(() => {
+    // If 'iss' is set, call the 'handleWebLaunch' function
+    if (window.location.search.includes('iss=')) {
+      handleWebLaunch();
+    }
+    // Attempt to create a client
+    else {
+      mySmartClientInstantiator().then(client => {
+        if (client) console.log('EMR connection established.');
+        setSmartClient(client);
+      });
+    }
+  }, []);
 
   const debouncedFilterValues = useDebounce(filterValues, 200);
   const { resultsPerPage, pageNumber, sortBy, sortDirection } = filterValues;
@@ -529,6 +584,8 @@ function WorkList({
 
   const { component: dataSourceConfigurationComponent } =
     customizationService.get('ohif.dataSourceConfigurationComponent') ?? {};
+
+  if (smartClient === null) return <div>Loading...</div>;
 
   return (
     <div className="flex h-screen flex-col bg-black">
